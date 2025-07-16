@@ -1,4 +1,5 @@
 import requests
+from product import product
 
 HEADERS = {
     "User-Agent": (
@@ -16,18 +17,22 @@ def fetch_product_ids(api_url):
         products = data.get("products", [])
         return [product["id"] for product in products if "id" in product]
     except requests.RequestException as e:
-        print(f"Ошибка при получении товаров: {e}")
+        print(f"❌ Ошибка при получении товаров: {e}")
         return []
 
 def build_product_links(product_ids):
-    return [f"https://www.wildberries.ru/catalog/{pid}/detail.aspx" for pid in product_ids]
+    links = []
+    for pid in product_ids:
+        link = product([pid])
+        if link:
+            links.append(link)
+    return links
 
-def start(api_url):
-
+def getting_id_product(api_url):
     ids = fetch_product_ids(api_url)
     links = build_product_links(ids)
 
-    print(f"ссылка: {len(links)}")
+    print(f"🔗 Найдено {len(links)} ссылок:")
     for link in links:
         print(link)
 

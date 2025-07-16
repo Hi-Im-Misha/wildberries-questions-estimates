@@ -1,6 +1,8 @@
 import requests
 from urllib.parse import urlparse
-from getting_id_product import start
+from getting_id_product import getting_id_product
+
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -70,4 +72,4 @@ if __name__ == "__main__":
     category = get_category_info_from_url(url)
     api_url = build_api_catalog_url(category["shard"], category["id"])
     print(api_url)
-    start(api_url)
+    getting_id_product(api_url)
