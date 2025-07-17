@@ -24,6 +24,7 @@ def build_product_links(product_ids):
     links = []
     for pid in product_ids:
         link = product([pid])
+        print("link", [pid])
         if link:
             links.append(link)
     return links
