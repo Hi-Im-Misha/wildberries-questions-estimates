@@ -1,5 +1,10 @@
+# product.py
+
+import os
+import json
 import requests
 from excel import save_to_excel
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -7,6 +12,9 @@ HEADERS = {
         "Chrome/114.0.0.0 Safari/537.36"
     )
 }
+
+all_card_data = []
+all_detail_data = []
 
 
 def get_basket(product_id: int) -> str:
@@ -38,6 +46,14 @@ def extract_fields(data: dict) -> dict:
     kinds = data.get("kinds")
     if isinstance(kinds, list):
         kinds = ", ".join(kinds)
+
+    photo_count = None
+    photos = data.get("photos")
+    if isinstance(photos, dict):
+        photo_count = photos.get("count")
+    elif isinstance(data.get("images"), list):
+        photo_count = len(data["images"])
+
     return {
         "imt_name": data.get("imt_name"),
         "subj_name": data.get("subj_name"),
@@ -45,12 +61,33 @@ def extract_fields(data: dict) -> dict:
         "vendor_code": data.get("vendor_code"),
         "kinds": kinds,
         "description": data.get("description"),
-        "photo_count": data.get("photos", {}).get("count")
+        "photo_count": photo_count
     }
 
 
+def download_photos(photo_urls: list[str], folder: str):
+    os.makedirs(folder, exist_ok=True)
+    for url in photo_urls:
+        filename = os.path.join(folder, url.split("/")[-1])
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=5)
+            if r.status_code == 200:
+                with open(filename, "wb") as f:
+                    f.write(r.content)
+        except Exception as e:
+            print(f"❌ Ошибка при загрузке {url}: {e}")
+
+
+def generate_photo_urls(product_id: int, count: int) -> list[str]:
+    vol = product_id // 100000
+    part = product_id // 1000
+    return [
+        f"https://basket-0{vol + 1}.wb.ru/vol{vol}/part{part}/{product_id}/images/big/{i}.jpg"
+        for i in range(1, count + 1)
+    ]
+
+
 def fetch_product_info(product_id: int) -> dict | None:
-    # Шаг 1: попытка по стандартному бакету
     basket = get_basket(product_id)
     url = build_card_url(product_id, basket)
     try:
@@ -61,9 +98,6 @@ def fetch_product_info(product_id: int) -> dict | None:
     except requests.RequestException:
         pass
 
-    # Шаг 2: перебор всех бакетов
-    vol = product_id // 100000
-    part = product_id // 1000
     for i in range(1, 33):
         basket = f"basket-{i:02d}"
         url = build_card_url(product_id, basket)
@@ -80,40 +114,55 @@ def fetch_product_info(product_id: int) -> dict | None:
 
 
 def fetch_detail_card_info(product_ids: list[int]) -> list[dict]:
-    ids_str = ",".join(str(pid) for pid in product_ids)
     url = (
         "https://card.wb.ru/cards/v4/detail?"
         f"appType=1&curr=rub&dest=-1257786&spp=30&hide_dtype=13"
-        f"&ab_testid=no_reranking&lang=ru&nm={ids_str}"
+        f"&ab_testid=no_reranking&lang=ru&nm={','.join(map(str, product_ids))}"
     )
-
     try:
         response = requests.get(url, headers=HEADERS, timeout=3)
         response.raise_for_status()
-        data = response.json()
+        products = response.json().get("data", {}).get("products", [])
+        return [
+            {
+                "name": p.get("name"),
+                "origName": p.get("origName"),
+                "basic": p.get("basic"),
+                "product": p.get("product")
+            }
+            for p in products
+        ]
     except requests.RequestException as e:
         print(f"❌ Ошибка при обращении к detail API: {e}")
         return []
 
-    products = data.get("data", {}).get("products", [])
-    result = []
 
-    for item in products:
-        result.append({
-            "name": item.get("name"),
-            "origName": item.get("origName"),
-            "basic": item.get("basic"),
-            "product": item.get("product"),
-        })
+def save_to_json(card_data: list[dict], detail_data: list[dict], filename: str = "wb_products.json"):
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        card_data = existing.get("card_data", []) + card_data
+        detail_data = existing.get("detail_data", []) + detail_data
 
-    return result
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump({"card_data": card_data, "detail_data": detail_data}, f, ensure_ascii=False, indent=4)
+
+    print(f"✅ JSON файл обновлен: {filename}")
 
 
+def product(product_ids: list[int], save: bool = False):
+    global all_card_data, all_detail_data
 
-# === Пример запуска ===
-def product(product_ids: list[int]):
+    # Загружаем уже сохранённые данные, если они есть
+    if save and os.path.exists("wb_products.json"):
+        with open("wb_products.json", "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        all_card_data = existing.get("card_data", [])
+        all_detail_data = existing.get("detail_data", [])
+
     card_data = []
-    
+    print(f"Запущено для {len(product_ids)} товаров")
+
     for pid in product_ids:
         data = fetch_product_info(pid)
         if data:
@@ -125,5 +174,12 @@ def product(product_ids: list[int]):
             print(f"\n🚫 Данные не найдены для товара {pid}")
 
     detail_data = fetch_detail_card_info(product_ids)
+    print(f"✅ Найдено {len(card_data)} карточек, {len(detail_data)} детальных описаний")
 
-    save_to_excel(card_data, detail_data)
+    all_card_data.extend(card_data)
+    all_detail_data.extend(detail_data)
+
+    if save:
+        save_to_excel(all_card_data, all_detail_data)
+        save_to_json(all_card_data, all_detail_data)
+
